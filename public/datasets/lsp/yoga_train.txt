@@ -1,0 +1,15 @@
+Standing_Forward_Bend/pose1.jpg,1
+Standing_Forward_Bend/pose2.jpg,1
+Standing_Forward_Bend/pose3.jpg,1
+Lotus_Pose/pose1.jpg,2
+Lotus_Pose/pose2.jpg,2
+Lotus_Pose/pose3.jpg,2
+Tree_Pose/pose1.jpg,3
+Tree_Pose/pose2.jpg,3
+Tree_Pose/pose3.jpg,3
+Headstand/pose1.jpg,4
+Headstand/pose2.jpg,4
+Headstand/pose3.jpg,4
+Corpse_Pose/pose1.jpg,5
+Corpse_Pose/pose2.jpg,5
+Corpse_Pose/pose3.jpg,5 
