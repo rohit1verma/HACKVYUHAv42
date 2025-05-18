@@ -31,9 +31,9 @@ const Footer: React.FC = () => {
           <div>
             <h3 className="text-lg font-semibold mb-4">Contact</h3>
             <ul className="space-y-2 text-gray-300 text-sm">
-              <li>Email: contact@yogaflow.ai</li>
-              <li>Phone: (555) 123-4567</li>
-              <li>Address: 123 Zen Street, Serenity City</li>
+              <li>Email: vermarohit7780@gmail.com</li>
+              <li>Phone: 7006380917</li>
+              <li>Address: BLDEA Engineering college Vijayapura(Karnataka)</li>
             </ul>
           </div>
         </div>
