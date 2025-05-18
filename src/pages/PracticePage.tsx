@@ -1,14 +1,32 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Pause, Play, RefreshCw, ChevronLeft } from 'lucide-react';
+import { Pause, Play, RefreshCw, ChevronLeft, Clock, Camera } from 'lucide-react';
 import * as poseDetection from '@tensorflow-models/pose-detection';
 import { detectPose, cleanup } from '../utils/poseDetection';
 import { PoseReferenceImage } from '../components/PoseReferenceImage';
+import PoseFeedback from '../components/PoseFeedback';
+import { usePractice } from '../contexts/PracticeContext';
+import { usePoses } from '../contexts/PoseContext';
+
+interface JointScore {
+  score: number;
+  currentAngle?: number;
+  targetAngle?: number;
+  tolerance?: number;
+}
 
 interface PoseState {
   score: number;
   feedback: string[];
   overallAccuracy?: number;
+  jointScores?: { [key: string]: JointScore };
+  keypoints?: poseDetection.Keypoint[];
+}
+
+interface PoseTimer {
+  startTime: number;
+  elapsedTime: number;
+  isActive: boolean;
 }
 
 const PracticePage: React.FC = () => {
@@ -20,9 +38,19 @@ const PracticePage: React.FC = () => {
   const [poseState, setPoseState] = useState<PoseState>({
     score: 0,
     feedback: [],
-    overallAccuracy: 0
+    overallAccuracy: 0,
+    jointScores: {}
   });
+  const { startSession, endSession, updateSessionAccuracy } = usePractice();
+  const { poses } = usePoses();
   const [referenceKeypoints, setReferenceKeypoints] = useState<poseDetection.Keypoint[] | null>(null);
+
+  // Timer state
+  const [timer, setTimer] = useState<PoseTimer>({
+    startTime: 0,
+    elapsedTime: 0,
+    isActive: false
+  });
 
   // Add pose connection pairs for better visualization
   const POSE_CONNECTIONS = [
@@ -42,7 +70,7 @@ const PracticePage: React.FC = () => {
   ];
 
   // Add keypoint drawing function with better visibility
-  const drawKeypoint = (ctx: CanvasRenderingContext2D, keypoint: any) => {
+  const drawKeypoint = (ctx: CanvasRenderingContext2D, keypoint: poseDetection.Keypoint) => {
     if (keypoint.score && keypoint.score > 0.3) {
       ctx.beginPath();
       ctx.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI);
@@ -55,8 +83,8 @@ const PracticePage: React.FC = () => {
   };
 
   // Add connection drawing function with better visibility
-  const drawConnection = (ctx: CanvasRenderingContext2D, from: any, to: any) => {
-    if (from.score > 0.3 && to.score > 0.3) {
+  const drawConnection = (ctx: CanvasRenderingContext2D, from: poseDetection.Keypoint, to: poseDetection.Keypoint) => {
+    if (from.score && to.score && from.score > 0.3 && to.score > 0.3) {
       ctx.beginPath();
       ctx.moveTo(from.x, from.y);
       ctx.lineTo(to.x, to.y);
@@ -113,6 +141,103 @@ const PracticePage: React.FC = () => {
     setReferenceKeypoints(keypoints);
   };
 
+  // Format time in MM:SS format
+  const formatTime = (timeInSeconds: number): string => {
+    const minutes = Math.floor(timeInSeconds / 60);
+    const seconds = Math.floor(timeInSeconds % 60);
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  // Update pose detection effect
+  useEffect(() => {
+    if (!isRecording || !videoRef.current || !poseId) return;
+
+    let animationFrame: number;
+    let isProcessing = false;
+    
+    const detectPoseFrame = async () => {
+      if (!isProcessing && videoRef.current && canvasRef.current) {
+        isProcessing = true;
+        try {
+          const result = await detectPose(videoRef.current, poseId);
+          setPoseState(result);
+          
+          if (result.overallAccuracy) {
+            updateSessionAccuracy(result.overallAccuracy);
+          }
+          
+          if (result.keypoints && result.keypoints.length > 0) {
+            drawPoseSkeleton(result.keypoints);
+          }
+        } catch (err) {
+          if (err instanceof Error && err.message !== 'Frame skipped') {
+            console.error('Error in pose detection:', err);
+          }
+        } finally {
+          isProcessing = false;
+        }
+      }
+      animationFrame = requestAnimationFrame(detectPoseFrame);
+    };
+
+    detectPoseFrame();
+    return () => {
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+      }
+    };
+  }, [isRecording, poseId, updateSessionAccuracy]);
+
+  // Timer effect - Moved outside pose detection for independent operation
+  useEffect(() => {
+    let intervalId: number;
+
+    if (timer.isActive) {
+      // Update timer immediately
+      setTimer(prev => ({
+        ...prev,
+        elapsedTime: (Date.now() - prev.startTime) / 1000
+      }));
+
+      // Then set up interval
+      intervalId = window.setInterval(() => {
+        setTimer(prev => ({
+          ...prev,
+          elapsedTime: (Date.now() - prev.startTime) / 1000
+        }));
+      }, 100); // Update more frequently for smoother display
+    }
+
+    return () => {
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [timer.isActive, timer.startTime]);
+
+  // Start/stop recording and timer
+  const toggleRecording = () => {
+    if (!isRecording && poseId) {
+      const startTime = Date.now();
+      startSession(poseId);
+      setTimer({
+        startTime,
+        elapsedTime: 0,
+        isActive: true
+      });
+      setIsRecording(true);
+    } else {
+      if (poseState.overallAccuracy) {
+        endSession(poseState.overallAccuracy);
+      }
+      setTimer(prev => ({
+        ...prev,
+        isActive: false
+      }));
+      setIsRecording(false);
+    }
+  };
+
   // Update video initialization
   useEffect(() => {
     if (!poseId) return;
@@ -159,50 +284,6 @@ const PracticePage: React.FC = () => {
     };
   }, [poseId]);
 
-  // Start/stop pose detection
-  const toggleRecording = () => {
-    setIsRecording(!isRecording);
-  };
-
-  // Update pose detection effect
-  useEffect(() => {
-    if (!isRecording || !videoRef.current || !poseId) return;
-
-    let animationFrame: number;
-    let isProcessing = false;
-    
-    const detectPoseFrame = async () => {
-      if (!isProcessing && videoRef.current && canvasRef.current) {
-        isProcessing = true;
-        try {
-          const result = await detectPose(videoRef.current, poseId);
-          setPoseState(result);
-          
-          if (result.keypoints && result.keypoints.length > 0) {
-            drawPoseSkeleton(result.keypoints);
-          }
-        } catch (err) {
-          if (err instanceof Error && err.message !== 'Frame skipped') {
-            console.error('Error in pose detection:', err);
-          }
-        } finally {
-          isProcessing = false;
-        }
-      }
-      
-      if (isRecording) {
-        animationFrame = requestAnimationFrame(detectPoseFrame);
-      }
-    };
-
-    detectPoseFrame();
-    return () => {
-      if (animationFrame) {
-        cancelAnimationFrame(animationFrame);
-      }
-    };
-  }, [isRecording, poseId]);
-
   if (!poseId) {
     return <div>No pose selected</div>;
   }
@@ -216,86 +297,93 @@ const PracticePage: React.FC = () => {
     : 'text-gray-500';
 
   return (
-    <div className="min-h-screen bg-gray-100 p-8">
-      <button
-        onClick={() => navigate(-1)}
-        className="mb-4 flex items-center text-gray-600 hover:text-gray-800"
-      >
-        <ChevronLeft className="w-5 h-5 mr-1" />
-        Back
-      </button>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Reference Image */}
-        <div className="bg-white rounded-lg shadow-lg p-4">
-          <h2 className="text-xl font-semibold mb-4">Reference Pose</h2>
-          <PoseReferenceImage
-            poseId={poseId}
-            onPoseDetected={handleReferenceDetected}
-          />
-        </div>
-
-        {/* Live Camera Feed */}
-        <div className="bg-white rounded-lg shadow-lg p-4">
-          <h2 className="text-xl font-semibold mb-4">Your Pose</h2>
-          <div className="relative aspect-video">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="hidden"
-            />
-            <canvas
-              ref={canvasRef}
-              className="w-full h-full object-cover rounded-lg"
-            />
-            
-            {/* Accuracy Overlay */}
-            <div className={`absolute top-4 right-4 bg-black bg-opacity-50 px-4 py-2 rounded-full ${accuracyColor}`}>
-              Accuracy: {Math.round(poseState.overallAccuracy || 0)}%
-            </div>
-
-            {/* Controls */}
-            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-4">
+    <div className="relative">
+      <div className="min-h-screen bg-gray-100 p-4">
+        <div className="max-w-6xl mx-auto">
+          {/* Back button and pose name */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center">
               <button
-                onClick={toggleRecording}
-                className="bg-white rounded-full p-3 shadow-lg hover:bg-gray-100"
+                onClick={() => navigate(-1)}
+                className="flex items-center text-gray-600 hover:text-gray-900"
               >
-                {isRecording ? (
-                  <Pause className="w-6 h-6 text-red-500" />
-                ) : (
-                  <Play className="w-6 h-6 text-green-500" />
-                )}
+                <ChevronLeft className="w-5 h-5 mr-1" />
+                Back
               </button>
-              <button
-                onClick={() => setIsRecording(false)}
-                className="bg-white rounded-full p-3 shadow-lg hover:bg-gray-100"
-              >
-                <RefreshCw className="w-6 h-6 text-blue-500" />
-              </button>
+              <h1 className="text-2xl font-bold ml-4">
+                {poses.find(p => p.id === poseId)?.name || 'Practice Session'}
+              </h1>
             </div>
           </div>
-        </div>
 
-        {/* Feedback Panel */}
-        <div className="md:col-span-2 bg-white rounded-lg shadow-lg p-6">
-          <h2 className="text-xl font-semibold mb-4">Real-time Feedback</h2>
-          <div className="space-y-2">
-            {poseState.feedback.map((feedback: string, index: number) => (
-              <div
-                key={index}
-                className="flex items-center text-gray-700 bg-gray-50 p-3 rounded-lg"
-              >
-                <div className="w-2 h-2 bg-blue-500 rounded-full mr-3" />
-                {feedback}
+          {/* Main content */}
+          <div className="flex flex-col h-full">
+            {/* Main content area */}
+            <div className="flex-1 grid grid-cols-2 gap-4">
+              {/* Left column - Camera view and timer */}
+              <div className="relative flex flex-col">
+                <div className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden">
+                  <video
+                    ref={videoRef}
+                    className="w-full h-full object-cover"
+                    playsInline
+                  />
+                  <canvas
+                    ref={canvasRef}
+                    className="absolute inset-0 w-full h-full"
+                  />
+                  {!isRecording && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50">
+                      <Camera className="w-16 h-16 text-white opacity-50" />
+                    </div>
+                  )}
+                </div>
+                
+                {/* Timer display below camera */}
+                <div className="mt-4 p-4 bg-gray-800 rounded-lg flex items-center justify-between">
+                  <div className="flex items-center">
+                    <Clock className="w-5 h-5 text-primary-400 mr-2" />
+                    <span className="text-2xl font-mono text-white">
+                      {formatTime(timer.elapsedTime)}
+                    </span>
+                  </div>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={toggleRecording}
+                      className="p-2 rounded-full bg-primary-500 hover:bg-primary-600 transition-colors"
+                    >
+                      {isRecording ? (
+                        <Pause className="w-5 h-5 text-white" />
+                      ) : (
+                        <Play className="w-5 h-5 text-white" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTimer({ startTime: Date.now(), elapsedTime: 0, isActive: false });
+                        setIsRecording(false);
+                      }}
+                      className="p-2 rounded-full bg-gray-600 hover:bg-gray-700 transition-colors"
+                    >
+                      <RefreshCw className="w-5 h-5 text-white" />
+                    </button>
+                  </div>
+                </div>
               </div>
-            ))}
-            {poseState.feedback.length === 0 && (
-              <div className="text-gray-500 italic">
-                Start the pose detection to receive feedback
+
+              {/* Right column - Reference pose and feedback */}
+              <div className="flex flex-col space-y-4">
+                <PoseReferenceImage
+                  poseId={poseId || ''}
+                  onPoseDetected={handleReferenceDetected}
+                />
+                <PoseFeedback
+                  accuracy={poseState.overallAccuracy || 0}
+                  feedback={poseState.feedback}
+                  jointScores={poseState.jointScores || {}}
+                />
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>

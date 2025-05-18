@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Calendar, Award, BarChart2 } from 'lucide-react';
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, RadialLinearScale, ArcElement, Filler } from 'chart.js';
-import { Line, Radar } from 'react-chartjs-2';
+import { Award, Clock, Star, Activity, TrendingUp, Calendar, BarChart2, Target, ChevronRight } from 'lucide-react';
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, RadialLinearScale, BarElement, ChartData } from 'chart.js';
+import { Line, Radar, Bar } from 'react-chartjs-2';
 import { useAuth } from '../contexts/AuthContext';
 import { usePoses } from '../contexts/PoseContext';
+import { usePractice } from '../contexts/PracticeContext';
+import { TestDashboard } from '../components/TestDashboard';
 
 // Register ChartJS components
 ChartJS.register(
@@ -13,220 +15,300 @@ ChartJS.register(
   PointElement,
   LineElement,
   RadialLinearScale,
-  ArcElement,
-  Filler,
+  BarElement,
   Title,
   Tooltip,
   Legend
 );
 
-// Define chart data types
-interface ChartData {
+interface JointScores {
+  [key: string]: {
+    score: number;
+  };
+}
+
+interface PracticeSession {
+  poseId: string;
+  startTime: number;
+  endTime?: number;
+  accuracyHistory: number[];
+  averageAccuracy: number;
+  duration: number;
+}
+
+interface LineChartData extends ChartData<'line'> {
   labels: string[];
   datasets: {
     label: string;
     data: number[];
     borderColor: string;
     backgroundColor: string;
-    tension?: number;
-    pointBackgroundColor?: string;
+    tension: number;
   }[];
 }
 
+interface RadarChartData extends ChartData<'radar'> {
+  labels: string[];
+  datasets: {
+    label: string;
+    data: number[];
+    backgroundColor: string;
+    borderColor: string;
+    pointBackgroundColor: string;
+  }[];
+}
+
+interface BarChartData extends ChartData<'bar'> {
+  labels: string[];
+  datasets: {
+    label: string;
+    data: number[];
+    backgroundColor: string;
+    borderColor: string;
+    borderWidth: number;
+  }[];
+}
+
+interface PoseProgress {
+  attempted: boolean;
+  mastered: boolean;
+  accuracy?: Array<{
+    score: number;
+    timestamp: number;
+    feedback: string[];
+  }>;
+}
+
+const POSE_CATEGORIES = ['Standing Poses', 'Balancing Poses', 'Seated Poses', 'Resting Poses', 'Inverted Poses'];
+
+const JOINT_CATEGORIES = {
+  'Head & Neck': ['neck', 'spine_upper'],
+  'Upper Body': ['left_shoulder', 'right_shoulder', 'chest'],
+  'Arms': ['left_elbow', 'right_elbow', 'left_wrist', 'right_wrist'],
+  'Core': ['spine_middle', 'waist', 'pelvis'],
+  'Legs': ['left_hip', 'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle']
+};
+
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
-  const { poses, userProgress, currentPose, setCurrentPose } = usePoses();
+  const { poses, userProgress } = usePoses();
+  const { getDailyStats, getTotalStats, sessions } = usePractice();
   
-  const [progressData, setProgressData] = useState<ChartData>({
+  const [progressData, setProgressData] = useState<LineChartData>({
     labels: [],
     datasets: []
   });
   
-  const [flexibilityData, setFlexibilityData] = useState<ChartData>({
+  const [recommendations, setRecommendations] = useState<string[]>([]);
+
+  const [radarData, setRadarData] = useState<RadarChartData>({
+    labels: POSE_CATEGORIES,
+    datasets: [
+      {
+        label: 'Category Accuracy',
+        data: [0, 0, 0, 0, 0],
+        backgroundColor: 'rgba(126, 87, 194, 0.2)',
+        borderColor: '#7e57c2',
+        pointBackgroundColor: '#7e57c2',
+      }
+    ],
+  });
+
+  const [jointProgressData, setJointProgressData] = useState<any>({
     labels: [],
     datasets: []
   });
+
+  // Generate recommendations
+  useEffect(() => {
+    const generateRecommendations = () => {
+      const recommendations: string[] = [];
+      const { totalSessions, averageAccuracy } = getTotalStats();
+
+      // Recommend based on practice frequency
+      if (totalSessions < 5) {
+        recommendations.push("Try to practice at least 3 times this week to build a habit");
+      }
+
+      // Recommend based on accuracy
+      if (averageAccuracy < 70) {
+        recommendations.push("Focus on basic poses to improve your form");
+      }
+
+      // Recommend based on pose mastery
+      const unmastered = poses.filter(pose => !userProgress[pose.id]?.mastered);
+      if (unmastered.length > 0) {
+        const nextPose = unmastered[0];
+        recommendations.push(`Practice ${nextPose.name} to expand your pose repertoire`);
+      }
+
+      setRecommendations(recommendations);
+    };
+
+    generateRecommendations();
+  }, [poses, userProgress, getTotalStats]);
 
   useEffect(() => {
-    // Generate dates for the last 7 days
-    const dates = Array.from({ length: 7 }, (_, i) => {
-      const date = new Date();
-      date.setDate(date.getDate() - (6 - i));
-      return date.toLocaleDateString('en-US', { weekday: 'short' });
-    });
+    // Get real data for the last 7 days
+    const { dates, accuracies, minutes } = getDailyStats(7);
 
-    // Update progress data
     setProgressData({
       labels: dates,
       datasets: [
         {
           label: 'Pose Accuracy (%)',
-          data: [65, 72, 75, 76, 80, 85, 88],
+          data: accuracies,
           borderColor: '#7e57c2',
           backgroundColor: 'rgba(126, 87, 194, 0.1)',
           tension: 0.3,
         },
         {
           label: 'Practice Minutes',
-          data: [15, 20, 25, 15, 30, 35, 40],
+          data: minutes,
           borderColor: '#4dd0e1',
           backgroundColor: 'rgba(77, 208, 225, 0.1)',
           tension: 0.3,
         },
       ],
     });
+  }, [getDailyStats]);
 
-    // Update flexibility data based on LSP categories
-    setFlexibilityData({
-      labels: ['Standing', 'Sitting', 'Balancing', 'Inverted', 'Reclining'],
-      datasets: [
-        {
-          label: 'Current Progress',
-          data: [75, 65, 80, 70, 90],
-          backgroundColor: 'rgba(126, 87, 194, 0.2)',
-          borderColor: '#7e57c2',
-          pointBackgroundColor: '#7e57c2',
-        },
-        {
-          label: 'Starting Level',
-          data: [60, 50, 70, 55, 75],
-          backgroundColor: 'rgba(77, 208, 225, 0.2)',
-          borderColor: '#4dd0e1',
-          pointBackgroundColor: '#4dd0e1',
-        },
-      ],
+  // Calculate average accuracy for each pose category
+  useEffect(() => {
+    const categoryAccuracies = POSE_CATEGORIES.map(category => {
+      const categoryPoses = poses.filter(pose => 
+        pose.category?.basic === category && (userProgress[pose.id] as PoseProgress)?.accuracy
+      );
+      
+      if (categoryPoses.length === 0) return 0;
+
+      const totalAccuracy = categoryPoses.reduce((sum, pose) => {
+        const poseAccuracies = (userProgress[pose.id] as PoseProgress)?.accuracy || [];
+        if (poseAccuracies.length === 0) return sum;
+        
+        const poseAverage = poseAccuracies.reduce((acc: number, curr: { score: number }) => acc + curr.score, 0) / poseAccuracies.length;
+        return sum + poseAverage;
+      }, 0);
+
+      return Math.round((totalAccuracy / categoryPoses.length) * 100);
     });
-  }, []);
 
-  // Calculate stats
+    setRadarData(prev => ({
+      ...prev,
+      datasets: [{
+        ...prev.datasets[0],
+        data: categoryAccuracies
+      }]
+    }));
+  }, [poses, userProgress]);
+
+  // Calculate joint-specific progress
+  useEffect(() => {
+    if (!sessions.length) return;
+
+    // Get the last 5 sessions
+    const recentSessions = sessions.slice(-5);
+    
+    // Calculate average joint scores for each session
+    const jointData = recentSessions.map(session => {
+      const jointScores: { [key: string]: number } = {};
+      
+      // Calculate average scores for each joint category
+      Object.entries(JOINT_CATEGORIES).forEach(([category, joints]) => {
+        // Use averageAccuracy as a fallback when joint scores are not available
+        const categoryScore = session.averageAccuracy || 0;
+        jointScores[category] = categoryScore;
+      });
+      
+      return {
+        date: new Date(session.startTime).toLocaleDateString(),
+        scores: jointScores
+      };
+    });
+
+    setJointProgressData({
+      labels: jointData.map(d => d.date),
+      datasets: Object.keys(JOINT_CATEGORIES).map((category, index) => ({
+        label: category,
+        data: jointData.map(d => Math.round(d.scores[category] * 100)),
+        backgroundColor: [
+          'rgba(126, 87, 194, 0.8)',
+          'rgba(77, 208, 225, 0.8)',
+          'rgba(255, 167, 38, 0.8)',
+          'rgba(102, 187, 106, 0.8)',
+          'rgba(240, 98, 146, 0.8)'
+        ][index],
+        borderColor: 'rgba(255, 255, 255, 0.8)',
+        borderWidth: 1
+      }))
+    });
+  }, [sessions]);
+
+  // Get real stats
+  const { totalSessions, totalMinutes, averageAccuracy } = getTotalStats();
   const masteredPoses = Object.entries(userProgress).filter(([_, status]) => status.mastered).length;
-  const attemptedPoses = Object.entries(userProgress).filter(([_, status]) => status.attempted).length;
-  const streak = 5; // Mock streak days
-  const totalSessions = 15; // Mock total sessions
-  const totalMinutes = 320; // Mock total practice minutes
 
-  // Group poses by category
-  const posesByCategory = poses.reduce((acc, pose) => {
-    const category = pose.category?.basic || 'Uncategorized';
-    if (!acc[category]) {
-      acc[category] = [];
-    }
-    acc[category].push(pose);
-    return acc;
-  }, {} as Record<string, typeof poses>);
-  
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header section */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8">
+    <div className="max-w-7xl mx-auto px-4 py-6">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">
-            Welcome back, {user?.name}!
-          </h1>
-          <p className="mt-1 text-lg text-gray-500">
-            Here's your yoga journey at a glance
-          </p>
+          <h1 className="text-2xl font-bold">Welcome back, {user?.name}!</h1>
+          <p className="text-gray-600">Here's your yoga journey at a glance</p>
         </div>
-        <div className="mt-4 md:mt-0">
-          <Link
-            to="/practice"
-            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-primary-500 hover:bg-primary-600"
-          >
-            Start Practice
-          </Link>
-        </div>
+        <Link
+          to="/practice"
+          className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
+        >
+          Start Practice
+        </Link>
       </div>
 
-      {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
-        <div className="bg-white overflow-hidden shadow rounded-lg">
-          <div className="p-5">
-            <div className="flex items-center">
-              <div className="flex-shrink-0 bg-primary-100 rounded-md p-3">
-                <Calendar className="h-6 w-6 text-primary-600" />
-              </div>
-              <div className="ml-5 w-0 flex-1">
-                <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
-                    Current Streak
-                  </dt>
-                  <dd>
-                    <div className="text-lg font-medium text-gray-900">{streak} days</div>
-                  </dd>
-                </dl>
-              </div>
-            </div>
+      {/* Enhanced Stats Cards */}
+      <div className="grid grid-cols-4 gap-4 mb-8">
+        <div className="bg-purple-50 rounded-lg p-4 flex items-start">
+          <Award className="w-8 h-8 text-purple-600 bg-purple-100 p-1.5 rounded-lg" />
+          <div className="ml-3">
+            <p className="text-sm text-gray-600">Average Accuracy</p>
+            <p className="text-xl font-semibold">{Math.round(averageAccuracy)}%</p>
+            <p className="text-xs text-gray-500">Last 7 days</p>
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
-          <div className="p-5">
-            <div className="flex items-center">
-              <div className="flex-shrink-0 bg-secondary-100 rounded-md p-3">
-                <Activity className="h-6 w-6 text-secondary-600" />
-              </div>
-              <div className="ml-5 w-0 flex-1">
-                <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
-                    Total Sessions
-                  </dt>
-                  <dd>
-                    <div className="text-lg font-medium text-gray-900">{totalSessions}</div>
-                  </dd>
-                </dl>
-              </div>
-            </div>
+        <div className="bg-orange-50 rounded-lg p-4 flex items-start">
+          <Clock className="w-8 h-8 text-orange-600 bg-orange-100 p-1.5 rounded-lg" />
+          <div className="ml-3">
+            <p className="text-sm text-gray-600">Practice Time</p>
+            <p className="text-xl font-semibold">{Math.round(totalMinutes)} mins</p>
+            <p className="text-xs text-gray-500">Total practice time</p>
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
-          <div className="p-5">
-            <div className="flex items-center">
-              <div className="flex-shrink-0 bg-accent-100 rounded-md p-3">
-                <BarChart2 className="h-6 w-6 text-accent-600" />
-              </div>
-              <div className="ml-5 w-0 flex-1">
-                <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
-                    Total Minutes
-                  </dt>
-                  <dd>
-                    <div className="text-lg font-medium text-gray-900">{totalMinutes}</div>
-                  </dd>
-                </dl>
-              </div>
-            </div>
+        <div className="bg-green-50 rounded-lg p-4 flex items-start">
+          <Calendar className="w-8 h-8 text-green-600 bg-green-100 p-1.5 rounded-lg" />
+          <div className="ml-3">
+            <p className="text-sm text-gray-600">Sessions</p>
+            <p className="text-xl font-semibold">{totalSessions}</p>
+            <p className="text-xs text-gray-500">Total practice sessions</p>
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
-          <div className="p-5">
-            <div className="flex items-center">
-              <div className="flex-shrink-0 bg-green-100 rounded-md p-3">
-                <Award className="h-6 w-6 text-green-600" />
-              </div>
-              <div className="ml-5 w-0 flex-1">
-                <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
-                    Mastered Poses
-                  </dt>
-                  <dd>
-                    <div className="text-lg font-medium text-gray-900">
-                      {masteredPoses}/{poses.length}
-                    </div>
-                  </dd>
-                </dl>
-              </div>
-            </div>
+        <div className="bg-yellow-50 rounded-lg p-4 flex items-start">
+          <Target className="w-8 h-8 text-yellow-600 bg-yellow-100 p-1.5 rounded-lg" />
+          <div className="ml-3">
+            <p className="text-sm text-gray-600">Mastered Poses</p>
+            <p className="text-xl font-semibold">{masteredPoses}/{poses.length}</p>
+            <p className="text-xs text-gray-500">Progress to mastery</p>
           </div>
         </div>
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Your Progress</h2>
-          <div className="h-80">
+      {/* Charts Grid */}
+      <div className="grid grid-cols-2 gap-8 mb-8">
+        {/* Weekly Progress */}
+        <div className="bg-white rounded-lg p-6">
+          <h2 className="text-lg font-semibold mb-4">Weekly Progress</h2>
+          <div className="h-[300px]">
             <Line
               data={progressData}
               options={{
@@ -235,190 +317,138 @@ const Dashboard: React.FC = () => {
                 scales: {
                   y: {
                     beginAtZero: true,
-                    ticks: {
-                      color: '#6b7280',
-                    },
-                    grid: {
-                      color: '#e5e7eb',
-                    },
-                  },
-                  x: {
-                    ticks: {
-                      color: '#6b7280',
-                    },
-                    grid: {
-                      display: false,
-                    },
-                  },
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                  }
                 },
                 plugins: {
-                  legend: {
-                    position: 'top',
-                    labels: {
-                      padding: 20,
-                      boxWidth: 10,
-                      usePointStyle: true,
-                    },
-                  },
-                  tooltip: {
-                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-                    padding: 10,
-                    bodyFont: {
-                      size: 12,
-                    },
-                    titleFont: {
-                      size: 14,
-                    },
-                  },
-                },
-                elements: {
-                  line: {
-                    borderWidth: 2,
-                  },
-                  point: {
-                    radius: 4,
-                    hoverRadius: 6,
-                  },
-                },
+                  legend: { position: 'bottom' }
+                }
               }}
             />
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Category Progress</h2>
-          <div className="h-80">
+        {/* Pose Category Progress */}
+        <div className="bg-white rounded-lg p-6">
+          <h2 className="text-lg font-semibold mb-4">Pose Categories</h2>
+          <div className="h-[300px]">
             <Radar
-              data={flexibilityData}
+              data={radarData}
               options={{
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
                   r: {
-                    angleLines: {
-                      display: true,
-                      color: '#e5e7eb',
-                    },
-                    grid: {
-                      color: '#e5e7eb',
-                    },
-                    ticks: {
-                      display: false,
-                      stepSize: 20,
-                    },
-                    pointLabels: {
-                      font: {
-                        size: 12,
-                      },
-                      color: '#4b5563',
-                    },
-                    suggestedMin: 0,
-                    suggestedMax: 100,
-                  },
+                    beginAtZero: true,
+                    max: 100,
+                    ticks: { stepSize: 20 }
+                  }
                 },
                 plugins: {
-                  legend: {
-                    position: 'top',
-                    labels: {
-                      padding: 20,
-                      boxWidth: 10,
-                      usePointStyle: true,
-                    },
-                  },
+                  legend: { position: 'bottom' }
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Joint Progress */}
+        <div className="bg-white rounded-lg p-6 col-span-2">
+          <h2 className="text-lg font-semibold mb-4">Joint Alignment Progress</h2>
+          <div className="h-[300px]">
+            <Bar
+              data={jointProgressData}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                  y: {
+                    beginAtZero: true,
+                    max: 100,
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                  }
                 },
+                plugins: {
+                  legend: { position: 'bottom' }
+                }
               }}
             />
           </div>
         </div>
       </div>
 
-      {/* Recommendations */}
-      <div className="bg-white p-6 rounded-lg shadow mb-8">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Personalized Recommendations</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {Object.entries(posesByCategory).slice(0, 3).map(([category, categoryPoses]) => (
-            <div key={category} className="rounded-lg border border-gray-200 p-5">
-              <h3 className="font-medium text-gray-900 mb-2">{category}</h3>
-              <p className="text-gray-600 text-sm mb-4">
-                Try these poses to improve your {category.toLowerCase()} practice:
-              </p>
-              <ul className="text-sm text-gray-700 space-y-1">
-                {categoryPoses.slice(0, 3).map(pose => (
-                  <li key={pose.id}>• {pose.name}</li>
-                ))}
-              </ul>
-            </div>
+      {/* Recent Sessions */}
+      <div className="bg-white rounded-lg p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">Recent Practice Sessions</h2>
+          <Link
+            to="/practice"
+            className="text-purple-600 hover:text-purple-700 flex items-center"
+          >
+            View All <ChevronRight className="w-4 h-4 ml-1" />
+          </Link>
+        </div>
+        <div className="space-y-4">
+          {sessions.slice(-5).reverse().map((session, index) => (
+            <Link
+              key={index}
+              to={`/practice/${session.poseId}`}
+              className="block border-b pb-4 hover:bg-gray-50 rounded-lg p-2 transition-colors"
+            >
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center">
+                  <Calendar className="w-5 h-5 text-purple-500 mr-2" />
+                  <span className="font-medium">
+                    {new Date(session.startTime).toLocaleDateString()}
+                  </span>
+                </div>
+                <span className={`px-2 py-1 rounded-full text-sm ${
+                  session.averageAccuracy >= 0.85 ? 'bg-green-100 text-green-800' :
+                  session.averageAccuracy >= 0.52 ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-red-100 text-red-800'
+                }`}>
+                  {Math.round(session.averageAccuracy * 100)}% Accuracy
+                </span>
+              </div>
+              <div className="text-sm text-gray-600 flex items-center">
+                <Clock className="w-4 h-4 mr-1" />
+                Duration: {Math.round(session.duration)} minutes
+              </div>
+            </Link>
           ))}
+          
+          {sessions.length === 0 && (
+            <div className="text-center py-8 text-gray-500">
+              <Activity className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+              <p className="mb-2">No practice sessions yet</p>
+              <Link
+                to="/practice"
+                className="text-purple-600 hover:text-purple-700 font-medium"
+              >
+                Start your first practice
+              </Link>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Recent Activity */}
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Recent Activity</h2>
-        <div className="flow-root">
-          <ul className="-mb-8">
-            <li>
-              <div className="relative pb-8">
-                <span className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true"></span>
-                <div className="relative flex space-x-3">
-                  <div>
-                    <span className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center ring-8 ring-white">
-                      <span className="h-5 w-5 rounded-full bg-green-500"></span>
-                    </span>
-                  </div>
-                  <div className="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
-                    <div>
-                      <p className="text-sm text-gray-500">Completed <span className="font-medium text-gray-900">20-minute practice</span></p>
-                    </div>
-                    <div className="text-right text-sm text-gray-500">
-                      <time dateTime="2024-01-14">Today</time>
-                    </div>
-                  </div>
-                </div>
+      {/* Recommendations */}
+      {recommendations.length > 0 && (
+        <div className="bg-white rounded-lg p-6 mt-8">
+          <h2 className="text-lg font-semibold mb-4">Personalized Recommendations</h2>
+          <div className="space-y-3">
+            {recommendations.map((recommendation, index) => (
+              <div key={index} className="flex items-center text-gray-700">
+                <TrendingUp className="h-5 w-5 text-purple-500 mr-2" />
+                <span>{recommendation}</span>
               </div>
-            </li>
-            <li>
-              <div className="relative pb-8">
-                <span className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true"></span>
-                <div className="relative flex space-x-3">
-                  <div>
-                    <span className="h-8 w-8 rounded-full bg-primary-100 flex items-center justify-center ring-8 ring-white">
-                      <span className="h-5 w-5 rounded-full bg-primary-500"></span>
-                    </span>
-                  </div>
-                  <div className="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
-                    <div>
-                      <p className="text-sm text-gray-500">Mastered <span className="font-medium text-gray-900">{poses[0]?.name || 'Standing Forward Bend'}</span></p>
-                    </div>
-                    <div className="text-right text-sm text-gray-500">
-                      <time dateTime="2024-01-13">Yesterday</time>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </li>
-            <li>
-              <div className="relative pb-8">
-                <div className="relative flex space-x-3">
-                  <div>
-                    <span className="h-8 w-8 rounded-full bg-secondary-100 flex items-center justify-center ring-8 ring-white">
-                      <span className="h-5 w-5 rounded-full bg-secondary-500"></span>
-                    </span>
-                  </div>
-                  <div className="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
-                    <div>
-                      <p className="text-sm text-gray-500">Completed <span className="font-medium text-gray-900">30-minute practice</span></p>
-                    </div>
-                    <div className="text-right text-sm text-gray-500">
-                      <time dateTime="2024-01-12">2 days ago</time>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </li>
-          </ul>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Add TestDashboard for simulation */}
+      <TestDashboard />
     </div>
   );
 };

@@ -24,8 +24,17 @@ interface SignupData {
   password: string;
   gender: string;
   experienceLevel: 'beginner' | 'intermediate' | 'advanced';
-  age?: number;
 }
+
+// Create a default test user
+const defaultUser = {
+  id: 'test-user-123',
+  name: 'Test User',
+  email: 'test@example.com',
+  gender: 'not-specified',
+  experienceLevel: 'intermediate' as const,
+  joinedDate: new Date(),
+};
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
@@ -39,7 +48,7 @@ const AuthContext = createContext<AuthContextType>({
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User>(null);
+  const [user, setUser] = useState<User>(defaultUser); // Set default user
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -47,26 +56,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const storedUser = localStorage.getItem('yogaflow_user');
     if (storedUser) {
       setUser(JSON.parse(storedUser));
+    } else {
+      // If no stored user, use default user
+      setUser(defaultUser);
+      localStorage.setItem('yogaflow_user', JSON.stringify(defaultUser));
     }
     setIsLoading(false);
   }, []);
 
   const login = async (email: string, password: string) => {
     try {
-      // Simulate API call
-      // In a real application, this would be a fetch to your backend
-      // For demo purposes, we'll simulate a successful login with mock data
-      
-      // Simulate network delay
+      // Simulate API call with network delay
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       const mockUser = {
-        id: 'user123',
-        name: 'Demo User',
+        ...defaultUser,
         email,
-        gender: 'female',
-        experienceLevel: 'beginner' as const,
-        joinedDate: new Date(),
       };
       
       setUser(mockUser);
@@ -79,19 +84,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signup = async (userData: SignupData) => {
     try {
-      // Simulate API call
-      // In a real application, this would be a fetch to your backend
-      
-      // Simulate network delay
+      // Simulate API call with network delay
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       const mockUser = {
-        id: 'user123',
+        ...defaultUser,
         name: userData.name,
         email: userData.email,
         gender: userData.gender,
         experienceLevel: userData.experienceLevel,
-        joinedDate: new Date(),
       };
       
       setUser(mockUser);
@@ -103,15 +104,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
-    setUser(null);
-    localStorage.removeItem('yogaflow_user');
+    setUser(defaultUser); // Set back to default user instead of null
+    localStorage.setItem('yogaflow_user', JSON.stringify(defaultUser));
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        isAuthenticated: !!user,
+        isAuthenticated: true, // Always authenticated with default user
         isLoading,
         login,
         signup,
